@@ -577,15 +577,6 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ---
 
-## 📞 **Support & Contact**
-
-- **📧 Email**: [your-email@domain.com]
-- **🐛 Issues**: [GitHub Issues](https://github.com/mehmetymw/goviz/issues)
-- **💬 Discussions**: [GitHub Discussions](https://github.com/mehmetymw/goviz/discussions)
-- **📱 Twitter**: [@yourhandle]
-
----
-
 <div align="center">
 
 **Built with ❤️ for the Go community**
