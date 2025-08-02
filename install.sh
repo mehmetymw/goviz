@@ -13,7 +13,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Default values
-GOVIZ_VERSION="${GOVIZ_VERSION:-latest}"
+GOVIZ_VERSION="${GOVIZ_VERSION:-v0.1.0}"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 GITHUB_REPO="mehmetymw/goviz"
 
