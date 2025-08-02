@@ -1,0 +1,285 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., v0.1.0)'
+        required: true
+        default: 'v0.1.0'
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  GO_VERSION: '1.24.5'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run tests
+        run: make test
+
+      - name: Run linting
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+      - name: Security scan
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+          - os: linux
+            arch: arm64
+          - os: linux
+            arch: arm
+          - os: darwin
+            arch: amd64
+          - os: darwin
+            arch: arm64
+          - os: windows
+            arch: amd64
+          - os: windows
+            arch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Get version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          BINARY_NAME="goviz"
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            BINARY_NAME="goviz.exe"
+          fi
+          
+          mkdir -p dist
+          go build -ldflags="-w -s -X main.version=$VERSION -X main.commit=$GITHUB_SHA -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o dist/$BINARY_NAME .
+
+      - name: Create archive
+        run: |
+          cd dist
+          BINARY_NAME="goviz"
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            BINARY_NAME="goviz.exe"
+          fi
+          
+          ARCHIVE_NAME="goviz_${{ steps.version.outputs.VERSION }}_${{ matrix.os }}_${{ matrix.arch }}"
+          
+          # Copy additional files
+          cp ../README.md .
+          echo "# License" > LICENSE
+          
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            zip -r "${ARCHIVE_NAME}.zip" $BINARY_NAME README.md LICENSE
+            echo "ARCHIVE_NAME=${ARCHIVE_NAME}.zip" >> $GITHUB_ENV
+          else
+            tar -czf "${ARCHIVE_NAME}.tar.gz" $BINARY_NAME README.md LICENSE
+            echo "ARCHIVE_NAME=${ARCHIVE_NAME}.tar.gz" >> $GITHUB_ENV
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARCHIVE_NAME }}
+          path: dist/${{ env.ARCHIVE_NAME }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          find artifacts -name "*.tar.gz" -exec cp {} release/ \;
+          find artifacts -name "*.zip" -exec cp {} release/ \;
+          ls -la release/
+
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Create release notes
+        run: |
+          cat > release_notes.md << 'EOF'
+          # GoViz ${{ steps.version.outputs.VERSION }}
+          
+          ## 🚀 Features
+          
+          - Comprehensive Go dependency analysis and visualization
+          - Multiple output formats: DOT, PNG, SVG, JSON, YAML, ASCII tree
+          - License compliance checking and analysis
+          - Dependency health assessment with recommendations
+          - CI/CD integration support
+          
+          ## 📦 Installation
+          
+          ### Quick Install (Recommended)
+          ```bash
+          curl -fsSL https://raw.githubusercontent.com/mehmetymw/goviz/main/install.sh | bash
+          ```
+          
+          ### Manual Installation
+          Download the appropriate binary for your platform from the assets below.
+          
+          ## 🎯 Usage Examples
+          
+          ```bash
+          # Basic dependency analysis
+          goviz generate
+          
+          # Health assessment
+          goviz doctor
+          
+          # License compliance check
+          goviz licenses
+          
+          # Generate PNG visualization
+          goviz generate --format png --output deps.png
+          
+          # JSON output for CI/CD
+          goviz analyze --format json --output analysis.json
+          ```
+          
+          ## 📊 Supported Platforms
+          
+          - Linux (amd64, arm64, arm)
+          - macOS (amd64, arm64) 
+          - Windows (amd64, arm64)
+          
+          ## 🔗 Links
+          
+          - [Documentation](https://github.com/mehmetymw/goviz#readme)
+          - [Installation Guide](https://github.com/mehmetymw/goviz#installation)
+          - [Usage Examples](https://github.com/mehmetymw/goviz#usage)
+          
+          ---
+          
+          **Full Changelog**: https://github.com/mehmetymw/goviz/compare/v0.9.0...${{ steps.version.outputs.VERSION }}
+          EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: "GoViz ${{ steps.version.outputs.VERSION }}"
+          body_path: release_notes.md
+          files: release/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-install-script:
+    needs: release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update install script default version
+        run: |
+          sed -i 's/GOVIZ_VERSION="${GOVIZ_VERSION:-.*}"/GOVIZ_VERSION="${GOVIZ_VERSION:-${{ steps.version.outputs.VERSION }}}"/g' install.sh
+
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add install.sh
+          if ! git diff --staged --quiet; then
+            git commit -m "Update install script to version ${{ steps.version.outputs.VERSION }}"
+            git push
+          fi
