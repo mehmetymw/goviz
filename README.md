@@ -73,6 +73,3 @@ goviz analyze --format json          # Full report in JSON
 
 **Built for the Go community – helping developers govern dependencies in the age of AI.**
 
----
-
-İstersen `contributing`, `architecture`, veya `json output` gibi bölümleri de ayrıca "extended" versiyon olarak README'nin sonuna veya ayrı bir dosyaya alabiliriz. İlgileniyorsan onu da çıkarabilirim.
